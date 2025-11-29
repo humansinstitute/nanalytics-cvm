@@ -45,6 +45,7 @@ export function initializeDatabase() {
       site_id INTEGER NOT NULL,
       page_path TEXT NOT NULL,
       device_type TEXT NOT NULL,
+      nostr_event_id TEXT,
       visited_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
     );
@@ -57,6 +58,10 @@ export function initializeDatabase() {
   `);
 
   ensureSiteColumn("secret_token", "TEXT NOT NULL DEFAULT ''");
+  ensureVisitColumn("nostr_event_id", "TEXT");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_visits_event ON visits(nostr_event_id);
+  `);
 
   return db;
 }
@@ -75,5 +80,14 @@ function ensureSiteColumn(column: string, type: string) {
         db!.prepare(`UPDATE sites SET secret_token = ? WHERE id = ?`).run(token, row.id);
       }
     }
+  }
+}
+
+function ensureVisitColumn(column: string, type: string) {
+  const hasColumn = db!
+    .query(`SELECT 1 FROM pragma_table_info('visits') WHERE name = ?`)
+    .get(column);
+  if (!hasColumn) {
+    db!.exec(`ALTER TABLE visits ADD COLUMN ${column} ${type};`);
   }
 }

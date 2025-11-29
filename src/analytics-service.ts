@@ -76,6 +76,7 @@ export function recordVisit(params: {
   pagePath?: string | null;
   deviceType?: string | null;
   userAgent?: string | null;
+  nostrEventId?: string | null;
 }) {
   const db = getDb();
   const site = findSite(params.siteUuid);
@@ -83,12 +84,28 @@ export function recordVisit(params: {
 
   const pagePath = normalizePagePath(params.pagePath);
   const deviceType = normalizeDeviceType(params.deviceType, params.userAgent);
+  const nostrEventId = (params.nostrEventId || "").trim() || null;
 
   const record = db.transaction(() => {
-    db.prepare(
-      `INSERT INTO visits (site_id, page_path, device_type, visited_at)
-       VALUES (?, ?, ?, CURRENT_TIMESTAMP)`
-    ).run(site.id, pagePath, deviceType);
+    const insert = db
+      .prepare(
+        `INSERT OR IGNORE INTO visits (site_id, page_path, device_type, nostr_event_id, visited_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`
+      )
+      .run(site.id, pagePath, deviceType, nostrEventId);
+
+    // If we ignored due to duplicate nostr_event_id, return existing stats unchanged
+    if (insert.changes === 0 && nostrEventId) {
+      const existing = db
+        .prepare(
+          `SELECT visit_count, last_seen
+           FROM page_stats
+           WHERE site_id = ? AND page_path = ? AND device_type = ?`
+        )
+        .get(site.id, pagePath, deviceType) as { visit_count: number; last_seen: string | null } | undefined;
+
+      return existing || { visit_count: 0, last_seen: null };
+    }
 
     return db
       .prepare(

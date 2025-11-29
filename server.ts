@@ -98,9 +98,10 @@ async function main() {
         userAgent: z.string().optional().describe("Optional UA for device detection"),
       },
     },
-    async ({ siteUuid, pagePath, deviceType, userAgent }) => {
+    async ({ siteUuid, pagePath, deviceType, userAgent }, extra) => {
       try {
-        const visit = recordVisit({ siteUuid, pagePath, deviceType, userAgent });
+        const nostrEventId = extra?.requestId ? String(extra.requestId) : null;
+        const visit = recordVisit({ siteUuid, pagePath, deviceType, userAgent, nostrEventId });
         return jsonContent(visit);
       } catch (error) {
         return jsonContent({ error: error instanceof Error ? error.message : String(error) });
