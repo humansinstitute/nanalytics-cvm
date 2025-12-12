@@ -1,6 +1,7 @@
 import { getDb } from "./db.js";
 import { DailyVisits, DeviceType, PageStatRow, PageStats, PageVisitsByDay, SiteRecord, SiteStats } from "./types.js";
 import { randomBytes } from "crypto";
+import { nip19 } from "nostr-tools";
 
 const DEVICE_TYPES: DeviceType[] = ["desktop", "mobile", "tablet", "other"];
 
@@ -33,6 +34,23 @@ function findSite(siteUuid: string): SiteRecord | null {
   const db = getDb();
   const row = db.query("SELECT * FROM sites WHERE site_uuid = ?").get(siteUuid) as SiteRecord | undefined;
   return row || null;
+}
+
+function normalizeHexPubkey(input: string | null | undefined): string | null {
+  if (!input) return null;
+  const value = input.trim();
+  if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
+
+  try {
+    const decoded = nip19.decode(value);
+    if (decoded.type === "npub" && typeof decoded.data === "string") {
+      return decoded.data.toLowerCase();
+    }
+  } catch {
+    // ignore decode errors
+  }
+
+  return null;
 }
 
 export function registerSite(params: {
@@ -160,7 +178,7 @@ export function getSiteStats(siteUuid: string, npub: string): SiteStats {
 
   const visitsByDayRows = db
     .query(
-      `SELECT date(visited_at) AS day, COUNT(*) AS visits
+      `SELECT date(visited_at, 'localtime') AS day, COUNT(*) AS visits
        FROM visits
        WHERE site_id = ?
        GROUP BY day
@@ -170,7 +188,7 @@ export function getSiteStats(siteUuid: string, npub: string): SiteStats {
 
   const pageVisitsByDayRows = db
     .query(
-      `SELECT page_path, date(visited_at) AS day, COUNT(*) AS visits
+      `SELECT page_path, date(visited_at, 'localtime') AS day, COUNT(*) AS visits
        FROM visits
        WHERE site_id = ?
        GROUP BY page_path, day
@@ -233,5 +251,77 @@ export function getSiteStats(siteUuid: string, npub: string): SiteStats {
     pages,
     visitsByDay,
     pageVisitsByDay,
+  };
+}
+
+export function updateSiteByOwner(params: {
+  siteUuid: string;
+  callerPubkey: string;
+  name?: string | null;
+}): SiteRecord {
+  const { siteUuid, callerPubkey, name } = params;
+  const site = findSite(siteUuid);
+  if (!site) {
+    throw new Error("Site not found");
+  }
+
+  const ownerHex = normalizeHexPubkey(site.owner_npub);
+  const callerHex = normalizeHexPubkey(callerPubkey);
+
+  if (!ownerHex || !callerHex) {
+    throw new Error("Unable to validate owner pubkey");
+  }
+
+  if (ownerHex !== callerHex) {
+    throw new Error("Caller pubkey does not match site owner");
+  }
+
+  const db = getDb();
+
+  // Build dynamic update - only include fields that were explicitly provided
+  const updates: string[] = [];
+  const values: (string | null)[] = [];
+
+  if ("name" in params) {
+    updates.push("name = ?");
+    values.push(name ?? null);
+  }
+
+  if (updates.length === 0) {
+    return site;
+  }
+
+  updates.push("updated_at = CURRENT_TIMESTAMP");
+  values.push(siteUuid);
+
+  db.prepare(`UPDATE sites SET ${updates.join(", ")} WHERE site_uuid = ?`).run(...values);
+
+  return findSite(siteUuid)!;
+}
+
+export function deleteSiteByOwner(params: { siteUuid: string; callerPubkey: string }) {
+  const { siteUuid, callerPubkey } = params;
+  const site = findSite(siteUuid);
+  if (!site) {
+    throw new Error("Site not found");
+  }
+
+  const ownerHex = normalizeHexPubkey(site.owner_npub);
+  const callerHex = normalizeHexPubkey(callerPubkey);
+
+  if (!ownerHex || !callerHex) {
+    throw new Error("Unable to validate owner pubkey");
+  }
+
+  if (ownerHex !== callerHex) {
+    throw new Error("Caller pubkey does not match site owner");
+  }
+
+  const db = getDb();
+  const deleted = db.prepare(`DELETE FROM sites WHERE id = ?`).run(site.id);
+
+  return {
+    siteUuid,
+    deleted: deleted.changes > 0,
   };
 }

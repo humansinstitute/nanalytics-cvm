@@ -21,6 +21,7 @@ Serve your own tiny script that calls the MCP tool `record_visit` (or front it w
 - `record_visit` — increment counts for a page/device (requires site UUID only).
 - `list_sites_for_npub` — list sites where `npub` matches the stored owner field (expects signed MCP call).
 - `get_site_stats` — aggregated per-page stats for a site UUID (requires matching `npub`, expects signed MCP call).
+- `delete_site` — removes a site and all stored stats; must be called by the owning `npub` (validated from the signed Nostr message).
 - `health` — simple ping.
 
 ## Development tips

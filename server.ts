@@ -5,7 +5,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { randomBytes } from "crypto";
 import { z } from "zod";
 import { initializeDatabase } from "./src/db.js";
-import { getSiteStats, listSitesForNpub, recordVisit, registerSite } from "./src/analytics-service.js";
+import { deleteSiteByOwner, getSiteStats, listSitesForNpub, recordVisit, registerSite, updateSiteByOwner } from "./src/analytics-service.js";
 
 const ENV_PATH = ".env";
 const RELAYS = process.env.RELAYS?.split(",") || [
@@ -142,6 +142,64 @@ async function main() {
       try {
         const stats = getSiteStats(siteUuid, npub);
         return jsonContent(stats);
+      } catch (error) {
+        return jsonContent({ error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  );
+
+  mcpServer.registerTool(
+    "update_site",
+    {
+      title: "Update site",
+      description: "Update site details (must be called by the owning npub)",
+      inputSchema: {
+        siteUuid: z.string().min(8).describe("Site UUID"),
+        name: z.string().nullable().optional().describe("New site name (null to clear)"),
+      },
+    },
+    async ({ siteUuid, name }, extra) => {
+      try {
+        const callerPubkey = (extra?.authInfo as { pubkey?: string } | undefined)?.pubkey;
+        if (!callerPubkey) {
+          return jsonContent({ error: "Missing caller pubkey; ensure request is signed with your Nostr key" });
+        }
+
+        const params: { siteUuid: string; callerPubkey: string; name?: string | null } = {
+          siteUuid,
+          callerPubkey,
+        };
+
+        if (name !== undefined) {
+          params.name = name;
+        }
+
+        const site = updateSiteByOwner(params);
+        return jsonContent(site);
+      } catch (error) {
+        return jsonContent({ error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  );
+
+  mcpServer.registerTool(
+    "delete_site",
+    {
+      title: "Delete site",
+      description: "Remove a site and all visit data (must be called by the owning npub)",
+      inputSchema: {
+        siteUuid: z.string().min(8).describe("Site UUID"),
+      },
+    },
+    async ({ siteUuid }, extra) => {
+      try {
+        const callerPubkey = (extra?.authInfo as { pubkey?: string } | undefined)?.pubkey;
+        if (!callerPubkey) {
+          return jsonContent({ error: "Missing caller pubkey; ensure request is signed with your Nostr key" });
+        }
+
+        const result = deleteSiteByOwner({ siteUuid, callerPubkey });
+        return jsonContent(result);
       } catch (error) {
         return jsonContent({ error: error instanceof Error ? error.message : String(error) });
       }
